@@ -1,39 +1,145 @@
 var express = require('express');
 var app = express();
 var https = require('https');
-//var request = require('request');
+const fs = require('fs');
+const rateLimit = require("express-rate-limit");
+
+//Prepare the port
 var port = process.env.PORT || 8080;
+var rates = (process.env.RATELIMIT || '3/60').split('/').map(c => parseInt(c));
 
+//Load the accounts
+const accounts = JSON.parse(fs.readFileSync('accounts.json'));
+
+// Setup the ratelimit
+const limiter = rateLimit({
+  windowMs: rates[1] * 1000, 
+  max: 		rates[0],
+  handler: (req, res) => {
+				res.setHeader('content-type', 'application/json');
+				res.status(429).send(JSON.stringify({ "error": "too many requests", "rate-limit": rates }));
+			},
+});
+
+//  apply to all requests
+app.use(limiter);
+
+//Listen to the server
 var server = app.listen(port, function () {
-	console.log("running on port: %s", port);
-
+	console.log("PORT: %s", port);
+	console.log("RATELIMIT: ", rates);
+	console.log("ACCOUNTS: %s", Object.keys(accounts).length);
 })
 
-app.get('/', function (req, res) {
-	res.send('howto: </br>\
-		/commits/:user - returns array with number of commits everyday</br>\
-		/total/:user - returns total number of commits this year</br>\
-		/commits/last/:user - returns number of commits for last 31 days');
-})
-
-app.get('/total/:user', function (req, res) {
+app.get('/:user', function (req, res) {
+	
+	//Validate the user is authorize
+	let user = authorize(req, res);
+	if (user === false) return;
+	
 	var options = {
 		host: 'github.com',
 		port: 443,
-		path: '/' + req.params.user,
+		path: '/' + user.profile,
 		method: 'GET',
 		headers: {
 			accept: 'text/html'
 		}
 	};
 	https.request(options, function(cres){
-		console.log('STATUS: ' + res.statusCode);
-		// console.log('HEADERS: ' + JSON.stringify(res.headers));
+		cres.setEncoding('utf8');
+		
+		var body = '';
+		cres.on('data', function (chunk) { body += chunk; });
+		cres.on('end', function () {
+			var calander = {};
+			
+			// get calendar wihtout svg tag
+		  	body = body.slice(body.indexOf('js-calendar-graph-svg')+23); 
+		  	body = body.slice(0, body.indexOf('</svg>'));
+
+		  	body.split("\n").slice(2).map(c => c.trim()).forEach(c => {
+		  		let dataCount = c.match(/data-count="(\d+)"/);
+		  		if(dataCount){
+					let dataDate = c.match(/data-date="(\d{4}-\d{2}-\d{2})"/);
+					calander[dataDate[1]] = parseInt(dataCount[1]);
+		  		}
+		  	});
+			
+		  	var obj = calander;
+			res.setHeader('content-type', 'application/json');
+		  	res.send(JSON.stringify(obj));
+		});
+
+	}).end();
+})
+
+app.get('/:user/monthly', function (req, res) {
+	
+	//Validate the user is authorize
+	let user = authorize(req, res);
+	if (user === false) return;
+	
+	var options = {
+		host: 'github.com',
+		port: 443,
+		path: '/' + user.profile,
+		method: 'GET',
+		headers: {
+			accept: 'text/html'
+		}
+	};
+	https.request(options, function(cres){
+		cres.setEncoding('utf8');
+		
+		var body = '';
+		cres.on('data', function (chunk) { body += chunk; });
+		cres.on('end', function () {
+			var calander = [];
+			
+			// get calendar wihtout svg tag
+		  	body = body.slice(body.indexOf('js-calendar-graph-svg')+23); 
+		  	body = body.slice(0, body.indexOf('</svg>'));
+
+		  	body.split("\n").slice(2).map(c => c.trim()).forEach(c => {
+		  		let dataCount = c.match(/data-count="(\d+)"/);
+		  		if(dataCount){
+					let dataDate = c.match(/data-date="(\d{4}-\d{2}-\d{2})"/);
+					let date = new Date(dataDate[1]);
+					if (calander[date.getMonth()] == null) calander[date.getMonth()] = [];
+					calander[date.getMonth()][date.getDate()-1] = parseInt(dataCount[1]);
+		  		}
+		  	});
+			
+		  	var obj = calander;
+			res.setHeader('content-type', 'application/json');
+		  	res.send(JSON.stringify(obj));
+		});
+
+	}).end();
+})
+
+// Total number of commits this year
+app.get('/:user/tally', function (req, res) {
+	
+	//Validate the user is authorize
+	let user = authorize(req, res);
+	if (user === false) return;
+	
+	var options = {
+		host: 'github.com',
+		port: 443,
+		path: '/' + user.profile,
+		method: 'GET',
+		headers: {
+			accept: 'text/html'
+		}
+	};
+	https.request(options, function(cres){
 		cres.setEncoding('utf8');
 		var body = '';
 
 		cres.on('data', function (chunk) {
-		//console.log('BODY: ' + chunk);
 			body += chunk;
 		});
 
@@ -49,98 +155,25 @@ app.get('/total/:user', function (req, res) {
 		  			counter += parseInt(fill[1]);
 		  		}
 		  	});
-		  	var obj = { "data" : counter}
+		  	var obj = { "count" : counter}
+			
+			res.setHeader('content-type', 'application/json');
 		  	res.send(JSON.stringify(obj));
 		});
-		console.log('test');
-
 	}).end();
 })
 
-app.get('/commits/:user', function (req, res) {
-	var options = {
-		host: 'github.com',
-		port: 443,
-		path: '/' + req.params.user,
-		method: 'GET',
-		headers: {
-			accept: 'text/html'
+function authorize(req, res) {
+	
+	if (req.params.user && accounts[req.params.user] != null) {
+		let user = accounts[req.params.user];
+		if (req.get('authorization') == user.key) {
+			return user;
 		}
-	};
-	https.request(options, function(cres){
-		console.log('STATUS: ' + res.statusCode);
-		// console.log('HEADERS: ' + JSON.stringify(res.headers));
-		cres.setEncoding('utf8');
-		var body = '';
-
-		cres.on('data', function (chunk) {
-		//console.log('BODY: ' + chunk);
-			body += chunk;
-		});
-
-		cres.on('end', function () {
-			var count = [];
-			// get calendar wihtout svg tag
-		  	body = body.slice(body.indexOf('js-calendar-graph-svg')+23); 
-		  	body = body.slice(0, body.indexOf('</svg>'));
-
-		  	body.split("\n").slice(2).map(c => c.trim()).forEach(c => {
-		  		let fill = c.match(/data-count="([0-9]+)"/);
-		  		if(fill){
-		  			count.push(parseInt(fill[1]));
-		  		}
-		  	});
-		  	var obj = { "data" : count}
-		  	res.send(JSON.stringify(obj));
-		});
-		console.log('test');
-
-	}).end();
-})
-
-app.get('/commits/last/:user', function (req, res) {
-	var options = {
-		host: 'github.com',
-		port: 443,
-		path: '/' + req.params.user,
-		method: 'GET',
-		headers: {
-			accept: 'text/html'
-		}
-	};
-	https.request(options, function(cres){
-		console.log('STATUS: ' + res.statusCode);
-		// console.log('HEADERS: ' + JSON.stringify(res.headers));
-		cres.setEncoding('utf8');
-		var body = '';
-
-		cres.on('data', function (chunk) {
-		//console.log('BODY: ' + chunk);
-			body += chunk;
-		});
-
-		cres.on('end', function () {
-			var count = [];
-			// get calendar wihtout svg tag
-		  	body = body.slice(body.indexOf('js-calendar-graph-svg')+23); 
-		  	body = body.slice(0, body.indexOf('</svg>'));
-		  	console.log(body);
-		  	body.split("\n").slice(2).map(c => c.trim()).forEach(c => {
-
-		  		let fill = c.match(/data-count="([0-9]+)"/);
-		  		if(fill){
-		  			count.push(parseInt(fill[1]));
-		  		}
-		  	});
-		  	console.log(count.length);
-		  	count = count.slice(count.length-31, count.length);
-		  	var d = new Date();
-    		var n = d.getDay()
-		  	var obj = { "day" : n,"data" : count}
-		  	res.send(JSON.stringify(obj));
-		});
-		console.log('test');
-
-	}).end();
-})
-
+	}
+	
+	res.status(403);
+	res.setHeader('content-type', 'application/json');
+	res.send(JSON.stringify({ "error": "forbidden" }));
+	return false;
+}
