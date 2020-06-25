@@ -16,10 +16,13 @@ Simple api to extract data from contributions calendar. Modifed so the data resp
 }
 ```
 
-`/:user/monthly` organises it in monthly folders and days. Each month is indexed from 0 to 11 (Jan -> Dec) and each day is indexed from 0. It will give an entire year, but that might be spread out to multiple years.
+`/:user/monthly` organises it in monthly folders and days. Each month is indexed from 0 to 11 (Jan -> Dec) and each day is indexed from 0. It will give an entire year, but that might be spread out to multiple years. Dates are padded out with NULL
 ```json
 {
   "2019": [
+    null,
+    null,
+    null,
     ...
     [8,5,9,11,8,12,12,9,2,0,4,0,0,0,2,4,3,2,2,0,0,0,0,0,0,0,0,0,0,0,0]  //December
   ],

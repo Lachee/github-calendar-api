@@ -95,7 +95,7 @@ app.get('/:user/monthly', function (req, res) {
 		var body = '';
 		cres.on('data', function (chunk) { body += chunk; });
 		cres.on('end', function () {
-			var calander = [];
+			var calander = {};
 			
 			// get calendar wihtout svg tag
 		  	body = body.slice(body.indexOf('js-calendar-graph-svg')+23); 
@@ -106,8 +106,9 @@ app.get('/:user/monthly', function (req, res) {
 		  		if(dataCount){
 					let dataDate = c.match(/data-date="(\d{4}-\d{2}-\d{2})"/);
 					let date = new Date(dataDate[1]);
-					if (calander[date.getMonth()] == null) calander[date.getMonth()] = [];
-					calander[date.getMonth()][date.getDate()-1] = parseInt(dataCount[1]);
+					if (calander[date.getFullYear()] == null) calander[date.getFullYear()] = [];
+					if (calander[date.getFullYear()][date.getMonth()] == null) calander[date.getFullYear()][date.getMonth()] = [];
+					calander[date.getFullYear()][date.getMonth()][date.getDate()-1] = parseInt(dataCount[1]);
 		  		}
 		  	});
 			
